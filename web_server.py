@@ -15512,11 +15512,21 @@ def _safe_move_file(src, dst):
         # If destination exists with content, treat as success.
         if dst.exists() and dst.stat().st_size > 0:
             logger.warning(f"Move raised {type(e).__name__} but destination exists, treating as success: {e}")
-            # Try to clean up source, but don't fail if we can't
-            try:
-                src.unlink()
-            except Exception:
-                logger.info(f"Could not delete source file (may be owned by another process): {src}")
+            for _attempt in range(5):
+                try:
+                    src.unlink()
+                    break
+                except PermissionError:
+                    if _attempt < 4:
+                        logger.debug(f"Source locked, retrying in 1s (attempt {_attempt + 1}/5): {src.name}")
+                        time.sleep(1)
+                    else:
+                        logger.warning(f"Could not delete source file after 5 attempts (slskd may still hold lock): {src}")
+                except FileNotFoundError:
+                    break
+                except Exception:
+                    logger.warning(f"Could not delete source file: {src}")
+                    break
             return
 
         # Cross-device link error — do manual binary copy
@@ -15531,10 +15541,21 @@ def _safe_move_file(src, dst):
                         os.fsync(f_dst.fileno())
 
                 # Delete source after successful copy
-                try:
-                    src.unlink()
-                except PermissionError:
-                    logger.info(f"Could not delete source file (may be owned by another process): {src}")
+                for _attempt in range(5):
+                    try:
+                        src.unlink()
+                        break
+                    except PermissionError:
+                        if _attempt < 4:
+                            logger.debug(f"Source locked after fallback copy, retrying in 1s (attempt {_attempt + 1}/5): {src.name}")
+                            time.sleep(1)
+                        else:
+                            logger.warning(f"Could not delete source file after 5 attempts (slskd may still hold lock): {src}")
+                    except FileNotFoundError:
+                        break
+                    except Exception:
+                        logger.warning(f"Could not delete source file: {src}")
+                        break
                 logger.info(f"Successfully moved file using fallback method: {src} -> {dst}")
                 return
             except Exception as fallback_error:
