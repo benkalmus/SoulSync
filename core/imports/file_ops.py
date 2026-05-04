@@ -440,6 +440,15 @@ def create_lossy_copy(final_path):
                     audio.save()
             except Exception as tag_err:
                 logger.error(f"[Lossy Copy] Could not update QUALITY tag: {tag_err}")
+
+            if config_manager.get("lossy_copy.delete_original", False):
+                try:
+                    if os.path.exists(final_path):
+                        os.remove(final_path)
+                        logger.info(f"[Lossy Copy] Deleted original FLAC (Blasphemy Mode): {os.path.basename(final_path)}")
+                except Exception as del_err:
+                    logger.warning(f"[Lossy Copy] Could not delete original FLAC: {del_err}")
+
             return out_path
 
         logger.error(f"[Lossy Copy] ffmpeg failed: {result.stderr[:200]}")

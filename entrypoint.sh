@@ -76,9 +76,13 @@ echo "   UMASK: $(umask)"
 echo ""
 echo "🚀 Starting SoulSync Web Server..."
 
-# Execute the main command as the soulsync user
+# Execute the main command
+# If PUID=0, run as root (needed when sharing volumes with root-owned files from other containers)
 # If already running as the correct user (e.g. Podman rootless with keep-id), skip gosu
-if [ "$(id -u)" = "$PUID" ]; then
+if [ "$PUID" = "0" ]; then
+    echo "⚠️  Running as root (PUID=0)"
+    exec "$@"
+elif [ "$(id -u)" = "$PUID" ]; then
     exec "$@"
 else
     exec gosu soulsync "$@"
