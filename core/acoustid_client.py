@@ -294,49 +294,51 @@ class AcoustIDClient:
         import requests
 
         try:
-            # Try to find a real audio file to fingerprint for an end-to-end test
             test_file = self._find_test_audio_file()
 
             if test_file and CHROMAPRINT_AVAILABLE:
                 logger.info(f"Testing API key with real audio file: {test_file}")
                 try:
                     result = self.fingerprint_and_lookup(test_file)
-                    # If we get here without exception, the API key is valid
-                    # (invalid keys raise or return error before results)
-                    return True, "AcoustID API key is valid"
+                    if result is not None:
+                        return True, "AcoustID API key is valid! fpcalc ready: " + (FPCALC_PATH or "chromaprint")
+                    # fingerprint_and_lookup returns None for "no match" AND for errors.
+                    # Distinguish by checking the API directly with the same key.
                 except Exception as e:
                     error_str = str(e).lower()
                     if 'invalid' in error_str and 'api' in error_str:
                         return False, "Invalid AcoustID API key - get one from https://acoustid.org/new-application"
-                    # Fingerprint/lookup failed for non-key reasons, fall through to direct test
                     logger.warning(f"Real file test failed ({e}), trying direct API call")
 
-            # Fallback: direct API call with minimal fingerprint
+            # Direct API call with dummy fingerprint - check error code explicitly
             url = 'https://api.acoustid.org/v2/lookup'
             params = {
                 'client': self.api_key,
                 'duration': 187,
                 'fingerprint': 'AQADtMkWaYkSZRGO',
-                'meta': 'recordings'
+                'meta': '',
             }
 
             response = requests.get(url, params=params, timeout=10)
             data = response.json()
+
+            if data.get('status') == 'ok':
+                return True, "AcoustID API key is valid! fpcalc ready: " + (FPCALC_PATH or "chromaprint")
 
             if data.get('status') == 'error':
                 error = data.get('error', {})
                 error_code = error.get('code', 0)
                 error_msg = error.get('message', 'Unknown error')
 
-                # Error code 4 is specifically "invalid API key"
                 if error_code == 4:
-                    return False, "Invalid AcoustID API key - get one from https://acoustid.org/new-application"
-                # Any other error (e.g. "invalid fingerprint") means the API key
-                # was accepted — the dummy test fingerprint is just rejected as expected
-                return True, "AcoustID API key is valid"
+                    return False, f"Invalid AcoustID API key - get one from https://acoustid.org/new-application (API says: {error_msg})"
+                if error_code == 5:
+                    return False, "AcoustID rate limit reached - try again in a few seconds"
+                if error_code == 1:
+                    return False, f"AcoustID API key rejected (code {error_code}: {error_msg}). The key may be invalid or expired - check https://acoustid.org/new-application"
+                return False, f"AcoustID API error (code {error_code}): {error_msg}"
 
-            # Status is 'ok' - key is valid
-            return True, "AcoustID API key is valid"
+            return True, "AcoustID API key is valid! fpcalc ready: " + (FPCALC_PATH or "chromaprint")
 
         except requests.exceptions.Timeout:
             return False, "AcoustID API timeout - try again later"
@@ -446,15 +448,37 @@ class AcoustIDClient:
             logger.warning(f"Failed to fingerprint {audio_file}: {e}")
             return None
         except acoustid.WebServiceError as e:
-            # Log more details about the API error
             api_key_preview = f"{self.api_key[:8]}..." if self.api_key and len(self.api_key) > 8 else "???"
             logger.warning(f"AcoustID API error (key: {api_key_preview}): {e}")
-            # Check for common errors
+
             error_str = str(e).lower()
             if 'invalid' in error_str or 'unknown' in error_str:
                 logger.error("API key appears to be invalid - check your AcoustID settings")
-            elif 'rate' in error_str or 'limit' in error_str:
-                logger.warning("Rate limited by AcoustID - will retry later")
+
+            # pyacoustid raises WebServiceError("status: error") for ALL API errors,
+            # including invalid API key (code 4). Re-query the API directly to get
+            # the actual error code so we can give a useful message.
+            try:
+                import requests
+                resp = requests.get('https://api.acoustid.org/v2/lookup', params={
+                    'client': self.api_key,
+                    'duration': 187,
+                    'fingerprint': 'AQADtMkWaYkSZRGO',
+                    'meta': '',
+                }, timeout=5)
+                data = resp.json()
+                if data.get('status') == 'error':
+                    code = data.get('error', {}).get('code', 0)
+                    msg = data.get('error', {}).get('message', '')
+                    if code == 4:
+                        logger.error("AcoustID API key is INVALID - get one from https://acoustid.org/new-application")
+                    elif code == 5:
+                        logger.warning("Rate limited by AcoustID - will retry later")
+                    else:
+                        logger.warning(f"AcoustID API error (code {code}): {msg}")
+            except Exception:
+                pass
+
             return None
         except Exception as e:
             logger.error(f"Unexpected error in AcoustID lookup: {e}", exc_info=True)
