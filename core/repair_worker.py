@@ -50,6 +50,9 @@ def _resolve_file_path(file_path, transfer_folder, download_folder=None):
     for base_dir in [transfer_folder, download_folder]:
         if not base_dir or not os.path.isdir(base_dir):
             continue
+        candidate = os.path.join(base_dir, file_path)
+        if os.path.exists(candidate):
+            return candidate
         for i in range(1, len(path_parts)):
             candidate = os.path.join(base_dir, *path_parts[i:])
             if os.path.exists(candidate):
@@ -664,11 +667,11 @@ class RepairWorker:
             conn = self.db._get_connection()
             cursor = conn.cursor()
 
-            # Dedup check: skip if same finding already exists (pending, resolved, OR dismissed)
+            # Dedup check: skip if same finding already pending
             cursor.execute("""
                 SELECT id FROM repair_findings
                 WHERE job_id = ? AND finding_type = ?
-                  AND status IN ('pending', 'resolved', 'dismissed')
+                  AND status = 'pending'
                   AND ((entity_type = ? AND entity_id = ?) OR (file_path = ? AND file_path IS NOT NULL))
                 LIMIT 1
             """, (job_id, finding_type, entity_type, entity_id, file_path))
