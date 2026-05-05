@@ -306,25 +306,28 @@ class AcoustIDClient:
                 'client': self.api_key,
                 'duration': 187,
                 'fingerprint': 'AQADtMkWaYkSZRGO',
-                'meta': 'recordings'
+                'meta': '',
             }
 
             response = requests.get(url, params=params, timeout=10)
             data = response.json()
 
+            if data.get('status') == 'ok':
+                return True, "AcoustID API key is valid! fpcalc ready: " + (FPCALC_PATH or "chromaprint")
+
             if data.get('status') == 'error':
                 error = data.get('error', {})
                 error_code = error.get('code', 0)
 
-                # Error code 4 is specifically "invalid API key"
                 if error_code == 4:
-                    return False, "Invalid AcoustID API key - get one from https://acoustid.org/new-application"
-                # Any other error (e.g. "invalid fingerprint") means the API key
-                # was accepted — the dummy test fingerprint is just rejected as expected
-                return True, "AcoustID API key is valid"
+                    return False, f"Invalid AcoustID API key - get one from https://acoustid.org/new-application (API says: {error_msg})"
+                if error_code == 5:
+                    return False, "AcoustID rate limit reached - try again in a few seconds"
+                if error_code == 1:
+                    return False, f"AcoustID API key rejected (code {error_code}: {error_msg}). The key may be invalid or expired - check https://acoustid.org/new-application"
+                return False, f"AcoustID API error (code {error_code}): {error_msg}"
 
-            # Status is 'ok' - key is valid
-            return True, "AcoustID API key is valid"
+            return True, "AcoustID API key is valid! fpcalc ready: " + (FPCALC_PATH or "chromaprint")
 
         except requests.exceptions.Timeout:
             return False, "AcoustID API timeout - try again later"
